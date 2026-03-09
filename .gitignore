@@ -1,0 +1,17 @@
+node_modules/
+.env
+*.sqlite
+sessions/
+*_backup/
+creds.json
+*.bak
+*.bak2
+dist/
+.DS_Store
+uploads/
+data.db
+data/
+*.sqlite-shm
+*.sqlite-wal
+server.pid
+src/
