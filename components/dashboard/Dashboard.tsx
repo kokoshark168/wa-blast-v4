@@ -5,7 +5,19 @@ import { Sidebar } from './Sidebar';
 import { Header } from './Header';
 import { SmartMoneyTracker } from '../modules/SmartMoneyTracker';
 import { WhaleIntelligence } from '../modules/WhaleIntelligence';
+import { HyperliquidMonitor } from '../modules/HyperliquidMonitor';
+import { OpenInterest } from '../modules/OpenInterest';
+import { LiquidationHeatmap } from '../modules/LiquidationHeatmap';
+import { TokenDiscovery } from '../modules/TokenDiscovery';
+import { SocialSentiment } from '../modules/SocialSentiment';
+import { OnChainIntelligence } from '../modules/OnChainIntelligence';
+import { AIResearch } from '../modules/AIResearch';
+import { AlphaScore } from '../modules/AlphaScore';
+import { Backtesting } from '../modules/Backtesting';
+import { PortfolioTracker } from '../modules/PortfolioTracker';
+import { Screener } from '../modules/Screener';
 import { AlertCenter } from '../modules/AlertCenter';
+import { AdminDashboard } from '../admin/AdminDashboard';
 
 interface User {
   id: string;
@@ -21,6 +33,7 @@ interface DashboardProps {
 
 export function Dashboard({ user }: DashboardProps) {
   const [activeModule, setActiveModule] = useState('overview');
+  const isAdmin = user?.role === 'ADMIN';
 
   const renderModule = () => {
     switch (activeModule) {
@@ -28,8 +41,32 @@ export function Dashboard({ user }: DashboardProps) {
         return <SmartMoneyTracker />;
       case 'whale':
         return <WhaleIntelligence />;
+      case 'hyperliquid':
+        return <HyperliquidMonitor />;
+      case 'open-interest':
+        return <OpenInterest />;
+      case 'liquidations':
+        return <LiquidationHeatmap />;
+      case 'tokens':
+        return <TokenDiscovery />;
+      case 'sentiment':
+        return <SocialSentiment />;
+      case 'onchain':
+        return <OnChainIntelligence />;
+      case 'research':
+        return <AIResearch />;
+      case 'alpha':
+        return <AlphaScore />;
+      case 'backtest':
+        return <Backtesting />;
+      case 'portfolio':
+        return <PortfolioTracker />;
+      case 'screener':
+        return <Screener />;
       case 'alerts':
         return <AlertCenter />;
+      case 'admin':
+        return <AdminDashboard role={user?.role} />;
       default:
         return <OverviewModule />;
     }
@@ -37,7 +74,7 @@ export function Dashboard({ user }: DashboardProps) {
 
   return (
     <div className="flex h-screen bg-black text-white">
-      <Sidebar activeModule={activeModule} onModuleChange={setActiveModule} />
+      <Sidebar activeModule={activeModule} onModuleChange={setActiveModule} isAdmin={isAdmin} />
       <div className="flex-1 flex flex-col overflow-hidden">
         <Header user={user} />
         <main className="flex-1 overflow-auto">
