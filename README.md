@@ -1,91 +1,225 @@
-# WA Blast Backoffice v4
+# AlphaFlow Terminal
 
-Multi-number WhatsApp blasting system with breeding, auto-reply, link tracking, and proxy management.
+Production-grade institutional crypto intelligence platform for discovering market-moving information before the majority of participants react.
+
+## Stack
+
+- **Frontend:** Next.js 15, TypeScript, React, Tailwind CSS, Shadcn UI
+- **Backend:** Next.js API Routes, Node.js
+- **Database:** PostgreSQL with Prisma ORM
+- **Real-time:** Redis, WebSocket
+- **Deployment:** Docker, Docker Compose
+- **Auth:** JWT, bcryptjs
 
 ## Features
 
-- 📱 **Multi-Number Management** — Connect 50+ WhatsApp numbers simultaneously
-- 🚀 **Bulk Messaging** — Campaign-based blast with scheduling and throttling
-- 🐣 **Number Breeding** — Automated warm-up conversations between numbers
-- 🤖 **Auto-Reply** — Keyword rules + AI sentiment analysis (OpenAI)
-- 🔗 **Link Tracking** — Short links with click analytics
-- 🛡️ **Proxy Support** — SOCKS5 proxy per number for Indonesia IP
-- 📊 **Dashboard** — Real-time stats, health scores, delivery tracking
-- 🔒 **Email OTP Auth** — Secure login with OTP
+### 14 Core Modules
 
-## Tech Stack
-
-- **Backend:** Node.js + Express + SQLite + Baileys (WhatsApp Web API)
-- **Frontend:** React 19 + Vite 7 + TailwindCSS + shadcn/ui
-- **Proxy:** SOCKS5 (IPRoyal or any residential proxy)
+1. **Smart Money Tracker** - Track top-performing wallets with ROI, win rate, and performance metrics
+2. **Whale Intelligence** - Detect transactions above $100k-$10M, classify movements, generate alerts
+3. **Hyperliquid Whale Monitor** - Track long/short positions, leverage, liquidation prices
+4. **Open Interest Intelligence** - Monitor OI/funding rate, detect squeeze setups
+5. **Liquidation Heatmap** - Visual heatmap of liquidity zones, updated every minute
+6. **Token Discovery Engine** - Scan tokens and score by volume/wallet/smart money growth
+7. **Social Sentiment Engine** - Monitor Twitter/Reddit/Telegram, sentiment analysis
+8. **On-chain Intelligence** - Track wallet creation, transfers, exchange reserves
+9. **AI Research Assistant** - Hourly/daily/weekly reports with LLM analysis
+10. **Alpha Scoring System** - Proprietary 0-100 score combining multiple signals
+11. **Backtesting Engine** - Backtest signals, calculate Sharpe/Sortino ratios
+12. **Alert Center** - Telegram/Discord/Email alerts for market events
+13. **Portfolio Tracker** - Track holdings, PnL, risk exposure, rebalancing
+14. **Screener** - Filter by market cap, liquidity, volume, alpha score
 
 ## Quick Start
 
-### Backend
-```bash
-cd backend
-cp ../.env.example .env  # Edit with your settings
-npm install
-node server.js
-```
+### Prerequisites
 
-### Frontend
+- Docker and Docker Compose
+- Node.js 20+
+- PostgreSQL 16+
+- Redis 7+
+
+### Development Setup
+
 ```bash
-cd frontend
+# Clone the repository
+git clone <repo-url>
+cd alphaflow-terminal
+
+# Install dependencies
 npm install
+
+# Setup environment
+cp .env.example .env
+
+# Start services (Docker)
+docker-compose up -d
+
+# Run database migrations
+npm run db:push
+
+# Start development server
 npm run dev
 ```
 
-### Production
-```bash
-# Frontend build
-cd frontend && npm run build
+The application will be available at `http://localhost:3000`
 
-# Backend with PM2
-pm2 start ecosystem.config.js
+### Docker Deployment
+
+```bash
+# Build and start all services
+npm run docker:up
+
+# View logs
+npm run docker:logs
+
+# Stop services
+npm run docker:down
 ```
 
-## Proxy Setup
+## Environment Variables
 
-The system requires SOCKS5 proxies for WhatsApp connections (Indonesia IP recommended).
+Create a `.env` file based on `.env.example`:
 
-Add proxies via the admin panel or directly in the database:
-- Host: your proxy host
-- Port: proxy port
-- Type: socks5
-- Username/Password: proxy credentials
+```
+DATABASE_URL=postgresql://user:password@localhost:5432/alphaflow
+REDIS_URL=redis://localhost:6379
+JWT_SECRET=your-secret-key
+NEXT_PUBLIC_API_URL=http://localhost:3000
+```
 
-## Configuration
+## API Endpoints
 
-All settings configurable via Settings page:
-- Message delays (global + per-campaign)
-- Anti-ban profiles
-- Auto-reply rules & AI settings
-- Proxy assignment (max numbers per proxy)
-- Breeding schedules
+### Authentication
+- `POST /api/auth/register` - Register new user
+- `POST /api/auth/login` - User login
+- `POST /api/auth/logout` - User logout
+
+### Wallets
+- `GET /api/wallets` - List user wallets
+- `POST /api/wallets` - Add new wallet
+- `GET /api/wallets/:id` - Get wallet details
+- `DELETE /api/wallets/:id` - Remove wallet
+
+### Alerts
+- `GET /api/alerts` - List user alerts
+- `POST /api/alerts` - Create alert
+- `PUT /api/alerts/:id` - Update alert
+- `DELETE /api/alerts/:id` - Delete alert
+
+### Transactions
+- `GET /api/transactions` - List transactions
+- `POST /api/transactions/analyze` - Analyze whale transactions
+
+## Database Schema
+
+Key tables:
+- `User` - User accounts and authentication
+- `Wallet` - Tracked wallets with metrics
+- `Holding` - Current token holdings
+- `Transaction` - On-chain transactions
+- `Alert` - User alerts and triggers
+- `Portfolio` - User portfolios
+- `AuditLog` - All user actions
+- `BacktestRun` - Strategy backtest results
+
+## Testing
+
+```bash
+# Run all tests
+npm test
+
+# Run with coverage
+npm run test:coverage
+
+# Watch mode
+npm run test:watch
+```
 
 ## Architecture
 
 ```
-backend/
-  server.js          # Main server (Express + WebSocket)
-  engine/
-    index.js         # WAEngine — Baileys session manager
-    breeding.js      # Breeding worker
-    breeding-conversations.js  # Conversation templates (661 lines)
-    scheduler.js     # Campaign scheduler
-  routes/            # API routes (33 files)
-  db/init.js         # SQLite schema
-  middleware/        # Auth, API keys
-  utils/             # Mailer, helpers
-
-frontend/
-  src/
-    components/pages/  # 32 pages
-    components/ui/     # shadcn components
-    lib/api.js         # Axios instance
+alphaflow-terminal/
+├── app/                  # Next.js app directory
+│   ├── layout.tsx        # Root layout
+│   ├── page.tsx          # Home page
+│   ├── globals.css       # Global styles
+│   └── providers.tsx     # Client providers
+├── pages/api/            # API routes
+│   ├── auth/             # Authentication
+│   ├── wallets/          # Wallet management
+│   ├── alerts/           # Alert management
+│   └── transactions/     # Transaction data
+├── components/           # React components
+│   ├── dashboard/        # Dashboard components
+│   ├── modules/          # Feature modules
+│   └── ui/               # UI components
+├── lib/                  # Utilities
+│   ├── auth/             # Auth helpers
+│   └── prisma.ts         # Prisma client
+├── hooks/                # React hooks
+├── services/             # External API services
+├── types/                # TypeScript types
+├── prisma/               # Database schema
+├── Dockerfile            # Docker image
+├── docker-compose.yml    # Local dev environment
+└── tailwind.config.ts    # Tailwind configuration
 ```
+
+## Data Sources
+
+- Binance API
+- Bybit API
+- Hyperliquid API
+- CoinGecko API
+- DefiLlama API
+- Ethereum RPC
+- Solana RPC
+- Twitter/X API
+- Reddit API
+- Telegram API
+
+## Enterprise Features
+
+- ✅ Multi-user support with role-based access
+- ✅ JWT authentication with secure password hashing
+- ✅ Comprehensive audit logging
+- ✅ Subscription tier system
+- ✅ Admin dashboard
+- ✅ Real-time WebSocket updates
+- ✅ Microservice-ready architecture
+- ✅ Full test coverage
+- ✅ Docker deployment
+- ✅ Production-ready code
+
+## Security
+
+- Passwords are hashed with bcryptjs (12 rounds)
+- JWT tokens with configurable expiry
+- CORS and security headers configured
+- SQL injection protection via Prisma
+- Environment variable isolation
+- Audit logging for all sensitive actions
+
+## Performance
+
+- Redis caching for frequently accessed data
+- Database query optimization with indexes
+- Connection pooling via Prisma
+- WebSocket for real-time updates
+- Nginx reverse proxy with gzip compression
+
+## Contributing
+
+1. Create a feature branch
+2. Make your changes
+3. Add tests for new features
+4. Submit a pull request
 
 ## License
 
-MIT
+Proprietary - AlphaFlow Terminal
+
+## Support
+
+For issues and support, contact: support@alphaflow.io

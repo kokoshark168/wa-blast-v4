@@ -1,0 +1,387 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  TRADER
+  SUBSCRIBER_PRO
+  SUBSCRIBER_ELITE
+  SUBSCRIBER_BASIC
+}
+
+enum SubscriptionTier {
+  FREE
+  BASIC
+  PRO
+  ELITE
+}
+
+enum TransactionType {
+  BUY
+  SELL
+  TRANSFER
+  DEPOSIT
+  WITHDRAWAL
+}
+
+enum ExchangeType {
+  BINANCE
+  BYBIT
+  HYPERLIQUID
+  OTHER
+}
+
+enum AlertType {
+  WHALE_BUY
+  WHALE_SELL
+  SMART_MONEY_ENTRY
+  SMART_MONEY_EXIT
+  FUNDING_EXTREME
+  OI_SPIKE
+  LIQUIDATION_ZONE
+  SENTIMENT_EXPLOSION
+  TREND_SHIFT
+  CUSTOM
+}
+
+enum AlertChannel {
+  TELEGRAM
+  DISCORD
+  EMAIL
+  IN_APP
+}
+
+enum AuditAction {
+  USER_LOGIN
+  USER_LOGOUT
+  USER_CREATE
+  USER_UPDATE
+  USER_DELETE
+  WALLET_ADD
+  WALLET_REMOVE
+  ALERT_CREATE
+  ALERT_TRIGGER
+  SUBSCRIPTION_CHANGE
+  SETTINGS_UPDATE
+}
+
+model User {
+  id                    String    @id @default(cuid())
+  email                 String    @unique
+  username              String    @unique
+  passwordHash          String
+  role                  UserRole  @default(SUBSCRIBER_BASIC)
+  subscriptionTier      SubscriptionTier @default(FREE)
+  isActive              Boolean   @default(true)
+  emailVerified         Boolean   @default(false)
+  twoFactorEnabled      Boolean   @default(false)
+  apiKey                String?   @unique
+  apiSecret             String?
+  telegramUserId        String?
+  discordUserId         String?
+  preferences           Json      @default("{}")
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  lastLoginAt           DateTime?
+
+  wallets               Wallet[]
+  transactions          Transaction[]
+  alerts                Alert[]
+  alertSubscriptions    AlertSubscription[]
+  portfolios            Portfolio[]
+  auditLogs             AuditLog[]
+  backtestRuns          BacktestRun[]
+  customScreeners       CustomScreener[]
+}
+
+model Wallet {
+  id                    String    @id @default(cuid())
+  userId                String
+  address               String
+  name                  String
+  chainType             String    @default("ethereum")
+  exchangeType          ExchangeType?
+  isSmartMoney          Boolean   @default(false)
+  roi                   Float     @default(0)
+  winRate               Float     @default(0)
+  avgHoldingPeriod      Int       @default(0)
+  riskScore             Float     @default(0)
+  profitFactor          Float     @default(0)
+  lastActivityAt        DateTime?
+  labels                String[]  @default([])
+  notes                 String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  holdings              Holding[]
+  transactions          Transaction[]
+  positions             Position[]
+
+  @@unique([userId, address])
+  @@index([userId])
+  @@index([isSmartMoney])
+}
+
+model Holding {
+  id                    String    @id @default(cuid())
+  walletId              String
+  tokenAddress          String
+  tokenSymbol           String
+  tokenName             String
+  quantity              Float
+  avgEntryPrice         Float
+  currentPrice          Float
+  unrealizedPnl         Float
+  unrealizedPnlPercent  Float
+  lastUpdatedAt         DateTime  @default(now())
+  createdAt             DateTime  @default(now())
+
+  wallet                Wallet    @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@unique([walletId, tokenAddress])
+  @@index([walletId])
+  @@index([tokenSymbol])
+}
+
+model Transaction {
+  id                    String    @id @default(cuid())
+  walletId              String
+  userId                String
+  txHash                String    @unique
+  type                  TransactionType
+  fromAddress           String
+  toAddress             String
+  tokenAddress          String
+  tokenSymbol           String
+  quantity              Float
+  priceUsd              Float
+  valueUsd              Float
+  blockNumber           BigInt
+  blockTimestamp        DateTime
+  gasUsed               BigInt?
+  gasPrice              Float?
+  classification        String    @default("unknown")
+  isWhaleTransaction    Boolean   @default(false)
+  isSmartMoneyTx        Boolean   @default(false)
+  chainType             String    @default("ethereum")
+  createdAt             DateTime  @default(now())
+
+  wallet                Wallet    @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([walletId])
+  @@index([userId])
+  @@index([blockTimestamp])
+  @@index([isWhaleTransaction])
+  @@index([tokenAddress])
+}
+
+model Position {
+  id                    String    @id @default(cuid())
+  walletId              String
+  exchange              ExchangeType
+  symbol                String
+  side                  String    @default("long")
+  leverage              Float     @default(1)
+  entryPrice            Float
+  currentPrice          Float
+  unrealizedPnl         Float
+  unrealizedPnlPercent  Float
+  liquidationPrice      Float
+  positionSize          Float
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+  closedAt              DateTime?
+
+  wallet                Wallet    @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId])
+  @@index([exchange])
+  @@index([symbol])
+}
+
+model Alert {
+  id                    String    @id @default(cuid())
+  userId                String
+  type                  AlertType
+  title                 String
+  description           String
+  severity              Int       @default(5)
+  isActive              Boolean   @default(true)
+  triggerConditions     Json
+  metadata              Json      @default("{}")
+  lastTriggeredAt       DateTime?
+  triggerCount          Int       @default(0)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptions         AlertSubscription[]
+  history               AlertHistory[]
+
+  @@index([userId])
+  @@index([type])
+}
+
+model AlertHistory {
+  id                    String    @id @default(cuid())
+  alertId               String
+  triggeredAt           DateTime  @default(now())
+  data                  Json
+
+  alert                 Alert     @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  @@index([alertId])
+  @@index([triggeredAt])
+}
+
+model AlertSubscription {
+  id                    String    @id @default(cuid())
+  userId                String
+  alertId               String
+  channels              AlertChannel[]
+  isActive              Boolean   @default(true)
+  createdAt             DateTime  @default(now())
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  alert                 Alert     @relation(fields: [alertId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, alertId])
+  @@index([userId])
+}
+
+model Portfolio {
+  id                    String    @id @default(cuid())
+  userId                String
+  name                  String
+  description           String?
+  totalValue            Float     @default(0)
+  totalPnl              Float     @default(0)
+  totalPnlPercent       Float     @default(0)
+  allocations           Json      @default("{}")
+  riskExposure          Float     @default(0)
+  isPublic              Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Subscription {
+  id                    String    @id @default(cuid())
+  tier                  SubscriptionTier
+  name                  String
+  price                 Float
+  features              String[]
+  maxWallets            Int       @default(5)
+  maxAlerts             Int       @default(10)
+  apiCallsPerDay        Int       @default(1000)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+}
+
+model AuditLog {
+  id                    String    @id @default(cuid())
+  userId                String
+  action                AuditAction
+  resourceType          String
+  resourceId            String?
+  changes               Json      @default("{}")
+  ipAddress             String?
+  userAgent             String?
+  createdAt             DateTime  @default(now())
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+}
+
+model BacktestRun {
+  id                    String    @id @default(cuid())
+  userId                String
+  strategyName          String
+  parameters            Json
+  startDate             DateTime
+  endDate               DateTime
+  winRate               Float
+  sharpeRatio           Float
+  sortinoRatio          Float
+  maxDrawdown           Float
+  cagr                  Float
+  totalTrades           Int
+  results               Json
+  createdAt             DateTime  @default(now())
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model CustomScreener {
+  id                    String    @id @default(cuid())
+  userId                String
+  name                  String
+  filters               Json
+  selectedTokens        String[]
+  results               Json      @default("{}")
+  lastRunAt             DateTime?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model MarketData {
+  id                    String    @id @default(cuid())
+  symbol                String
+  exchange              String
+  price                 Float
+  volume24h             Float
+  marketCap             Float
+  priceChange24h        Float
+  timestamp             DateTime  @default(now())
+
+  @@unique([symbol, exchange, timestamp])
+  @@index([symbol])
+  @@index([timestamp])
+}
+
+model SocialSignal {
+  id                    String    @id @default(cuid())
+  platform              String
+  keyword               String
+  mentionCount          Int
+  sentimentScore        Float
+  trendScore            Float
+  timestamp             DateTime  @default(now())
+
+  @@unique([platform, keyword, timestamp])
+  @@index([keyword])
+  @@index([timestamp])
+}
+
+model OnChainMetric {
+  id                    String    @id @default(cuid())
+  chainType             String
+  metricType            String
+  value                 Float
+  metadata              Json      @default("{}")
+  timestamp             DateTime  @default(now())
+
+  @@index([chainType])
+  @@index([metricType])
+  @@index([timestamp])
+}
