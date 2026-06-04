@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import type { ExchangeType } from '@prisma/client';
 import { verifyToken } from '@/lib/auth/jwt';
 import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
@@ -41,7 +42,7 @@ export default async function handler(
           address: data.address.toLowerCase(),
           name: data.name,
           chainType: data.chainType,
-          exchangeType: data.exchangeType,
+          exchangeType: data.exchangeType as ExchangeType | undefined,
         },
       });
 

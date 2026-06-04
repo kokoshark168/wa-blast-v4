@@ -11,7 +11,7 @@ import { DataTable, type Column } from '@/components/ui/DataTable';
 import { fmtPct, fmtPct01, fmtUsd, shortAddr, colorForValue } from '@/components/ui/format';
 
 type Window = '7D' | '30D' | '90D';
-const WINDOW_QUERY: Record<Window, string> = { '7D': 'roi7d', '30D': 'roi30d', '90D': 'roi90d' };
+const WINDOW_QUERY: Record<Window, string> = { '7D': '7d', '30D': '30d', '90D': '90d' };
 
 function perfFor(w: RankedWallet, win: Window): number {
   return win === '7D' ? w.performance7d : win === '30D' ? w.performance30d : w.performance90d;

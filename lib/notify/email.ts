@@ -91,7 +91,6 @@ export class EmailChannel implements NotificationChannel {
       this.transporter = this.transportFactory(opts);
     } else {
       // Lazy require keeps module import side-effect free and offline-safe.
-      // eslint-disable-next-line @typescript-eslint/no-var-requires
       const nodemailer = require('nodemailer') as NodemailerLike;
       this.transporter = nodemailer.createTransport(opts);
     }

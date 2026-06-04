@@ -31,3 +31,6 @@ coverage/
 Thumbs.db
 prisma/dev.db
 prisma/dev.db-journal
+
+# Build info
+tsconfig.tsbuildinfo

@@ -1,4 +1,5 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import type { AlertType } from '@prisma/client';
 import { verifyToken } from '@/lib/auth/jwt';
 import { prisma } from '@/lib/prisma';
 import { z } from 'zod';
@@ -39,7 +40,7 @@ export default async function handler(
       const alert = await prisma.alert.create({
         data: {
           userId,
-          type: data.type,
+          type: data.type as AlertType,
           title: data.title,
           description: data.description,
           triggerConditions: data.triggerConditions,
