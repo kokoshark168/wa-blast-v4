@@ -251,10 +251,10 @@ describe('Database Schema', () => {
       );
     `);
 
-    db.prepare('INSERT INTO users_test (id, email) VALUES (1, "test@test.com")').run();
+    db.prepare("INSERT INTO users_test (id, email) VALUES (1, 'test@test.com')").run();
 
     expect(() => {
-      db.prepare('INSERT INTO users_test (id, email) VALUES (2, "test@test.com")').run();
+      db.prepare("INSERT INTO users_test (id, email) VALUES (2, 'test@test.com')").run();
     }).toThrow();
   });
 });

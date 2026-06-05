@@ -1,7 +1,7 @@
 /**
  * Adapter Tests - Mocked API calls
  */
-import { describe, it, expect, beforeAll } from '@jest/globals';
+import { describe, it, expect, beforeAll, jest } from '@jest/globals';
 import { DramaBoxAdapter } from '../adapters/full/DramaBoxAdapter.js';
 import { ShortMaxAdapter } from '../adapters/full/ShortMaxAdapter.js';
 import { AdapterRegistry } from '../adapters/registry.js';
@@ -80,6 +80,7 @@ describe('Adapter Search (Mocked)', () => {
   });
 
   it('should retry on failure', async () => {
+    fetch.mockClear();
     fetch
       .mockRejectedValueOnce(new Error('Timeout'))
       .mockResolvedValueOnce({

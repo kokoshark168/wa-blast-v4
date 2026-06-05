@@ -147,6 +147,9 @@ describe('ReferralService', () => {
         amount REAL,
         wallet_address TEXT,
         status TEXT DEFAULT 'pending',
+        transaction_id TEXT,
+        requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        approved_at DATETIME,
         FOREIGN KEY (user_id) REFERENCES users(id)
       );
     `);

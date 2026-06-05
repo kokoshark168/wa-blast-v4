@@ -7,9 +7,9 @@
   "scripts": {
     "start": "node server-phase-b.js",
     "dev": "NODE_ENV=development node server-phase-b.js",
-    "test": "jest tests/",
-    "test:unit": "jest tests/unit.test.js",
-    "test:integration": "jest tests/integration.test.js"
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest tests/",
+    "test:unit": "NODE_OPTIONS=--experimental-vm-modules jest tests/unit.test.js",
+    "test:integration": "NODE_OPTIONS=--experimental-vm-modules jest tests/integration.test.js"
   },
   "dependencies": {
     "better-sqlite3": "^9.0.0",
