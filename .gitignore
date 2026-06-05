@@ -1,6 +1,9 @@
 node_modules/
 .env
 *.sqlite
+*.db
+*.db-shm
+*.db-wal
 sessions/
 *_backup/
 creds.json
@@ -9,7 +12,6 @@ creds.json
 dist/
 .DS_Store
 uploads/
-data.db
 data/
 *.sqlite-shm
 *.sqlite-wal
