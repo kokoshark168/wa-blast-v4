@@ -7,7 +7,8 @@
  * - VIP checking - verify subscription before sending
  * - Referral tracking - commission on successful sends
  */
-import { Bot, InlineQueryResultArticle, InputTextMessageContent } from 'grammy';
+import grammy from 'grammy';
+const { Bot, InlineQueryResultArticle, InputTextMessageContent } = grammy;
 import pino from 'pino';
 import db from '../utils/db.js';
 import { registry } from '../adapters/registry.js';
