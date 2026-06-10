@@ -143,7 +143,7 @@ describe('Referral Workflow', () => {
     `).run();
 
     // Step 6: Request withdrawal
-    const withdrawal = await service.requestWithdrawal(1, 1.00, '0xabc123');
+    const withdrawal = await service.requestWithdrawal(1, 1.00, '0xabc1230000000000000000000000000000000000');
     expect(withdrawal.status).toBe('pending');
 
     // Step 7: Admin approves

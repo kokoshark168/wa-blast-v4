@@ -79,15 +79,21 @@ export class BaseAdapter {
 
     for (let attempt = 0; attempt < this.retryAttempts; attempt++) {
       try {
+        const requestHeaders = {
+          'Accept': 'application/json',
+          'User-Agent': 'DramaBotAdapter/1.0',
+          ...headers
+        };
+        if (data) {
+          requestHeaders['Content-Type'] = requestHeaders['Content-Type'] || 'application/json';
+        }
+
         const response = await fetch(url, {
           method,
-          headers: {
-            'Accept': 'application/json',
-            'User-Agent': 'DramaBotAdapter/1.0',
-            ...headers
-          },
+          headers: requestHeaders,
           body: data ? JSON.stringify(data) : undefined,
-          timeout
+          // fetch() has no `timeout` option; AbortSignal is the supported mechanism
+          signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(timeout) : undefined
         });
 
         if (!response.ok) {
@@ -150,7 +156,8 @@ export class BaseAdapter {
   }
 
   _hasMethod(methodName) {
+    // A capability exists when a subclass overrides the abstract base implementation.
     const method = this[methodName];
-    return method && method.toString() !== this.constructor.prototype[methodName]?.toString();
+    return typeof method === 'function' && method !== BaseAdapter.prototype[methodName];
   }
 }

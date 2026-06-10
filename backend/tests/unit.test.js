@@ -148,8 +148,10 @@ describe('ReferralService', () => {
         wallet_address TEXT,
         status TEXT DEFAULT 'pending',
         transaction_id TEXT,
+        rejection_reason TEXT,
         requested_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         approved_at DATETIME,
+        rejected_at DATETIME,
         FOREIGN KEY (user_id) REFERENCES users(id)
       );
     `);
@@ -189,7 +191,7 @@ describe('ReferralService', () => {
     expect(stats).toHaveProperty('pending_balance');
   });
 
-  it('should request withdrawal', async () => {
+  it('should request withdrawal and hold the balance immediately', async () => {
     // Award commission first
     db.prepare(`
       INSERT INTO referral_earnings (referrer_id, referred_user_id, amount, status)
@@ -200,10 +202,55 @@ describe('ReferralService', () => {
       UPDATE referral_codes SET pending_balance = 1.00 WHERE user_id = 1
     `).run();
 
-    const withdrawal = await service.requestWithdrawal(1, 1.00, '0x123...');
+    const withdrawal = await service.requestWithdrawal(1, 1.00, '0x1234567890abcdef');
 
     expect(withdrawal.status).toBe('pending');
     expect(withdrawal.amount).toBe(1.00);
+
+    // Funds must be held at request time so concurrent requests can't over-withdraw
+    const balance = db.prepare('SELECT pending_balance FROM referral_codes WHERE user_id = 1').get();
+    expect(balance.pending_balance).toBe(0);
+  });
+
+  it('should reject withdrawal with negative or invalid amount', async () => {
+    await expect(service.requestWithdrawal(1, -5, '0x1234567890abcdef'))
+      .rejects.toThrow('positive number');
+    await expect(service.requestWithdrawal(1, NaN, '0x1234567890abcdef'))
+      .rejects.toThrow('positive number');
+    await expect(service.requestWithdrawal(1, 1, ''))
+      .rejects.toThrow('wallet address');
+  });
+
+  it('should reject withdrawal exceeding balance', async () => {
+    await expect(service.requestWithdrawal(1, 999, '0x1234567890abcdef'))
+      .rejects.toThrow('Insufficient balance');
+  });
+
+  it('should not approve a withdrawal twice', async () => {
+    db.prepare('UPDATE referral_codes SET pending_balance = 2.00 WHERE user_id = 1').run();
+    const withdrawal = await service.requestWithdrawal(1, 2.00, '0x1234567890abcdef');
+
+    await service.approveWithdrawal(withdrawal.withdrawal_id, 'tx-1');
+    await expect(service.approveWithdrawal(withdrawal.withdrawal_id, 'tx-2'))
+      .rejects.toThrow('already approved');
+  });
+
+  it('should refund the held balance when a withdrawal is rejected', async () => {
+    db.prepare('UPDATE referral_codes SET pending_balance = 3.00 WHERE user_id = 1').run();
+    const withdrawal = await service.requestWithdrawal(1, 3.00, '0x1234567890abcdef');
+
+    const held = db.prepare('SELECT pending_balance FROM referral_codes WHERE user_id = 1').get();
+    expect(held.pending_balance).toBe(0);
+
+    await service.rejectWithdrawal(withdrawal.withdrawal_id, 'invalid wallet');
+
+    const refunded = db.prepare('SELECT pending_balance FROM referral_codes WHERE user_id = 1').get();
+    expect(refunded.pending_balance).toBe(3.00);
+
+    const row = db.prepare('SELECT status, rejection_reason FROM withdrawals WHERE id = ?')
+      .get(withdrawal.withdrawal_id);
+    expect(row.status).toBe('rejected');
+    expect(row.rejection_reason).toBe('invalid wallet');
   });
 });
 
@@ -218,5 +265,48 @@ describe('Code Generation', () => {
       expect(codes.has(code)).toBe(false);
       codes.add(code);
     }
+  });
+
+  it('should only use allowed characters', () => {
+    const service = new ReferralService({});
+    for (let i = 0; i < 20; i++) {
+      expect(service.generateCode()).toMatch(/^[A-Z0-9]{8}$/);
+    }
+  });
+});
+
+describe('Adapter Capabilities', () => {
+  it('should report full capabilities for a complete adapter', () => {
+    const adapter = new DramaBoxAdapter();
+    const caps = adapter.getCapabilities();
+
+    expect(caps.search).toBe(true);
+    expect(caps.details).toBe(true);
+    expect(caps.episodes).toBe(true);
+    expect(caps.full).toBe(true);
+  });
+
+  it('should report no capabilities for the abstract base adapter', () => {
+    const adapter = new BaseAdapter('Bare', { baseUrl: 'http://x.local' });
+    const caps = adapter.getCapabilities();
+
+    expect(caps.search).toBe(false);
+    expect(caps.details).toBe(false);
+    expect(caps.episodes).toBe(false);
+    expect(caps.full).toBe(false);
+  });
+});
+
+describe('Registry duplicate registration', () => {
+  it('should not duplicate an adapter registered twice', () => {
+    const reg = new AdapterRegistry();
+    const adapter = new BaseAdapter('Dup', { baseUrl: 'http://dup.local' });
+
+    reg.register(adapter, 'full');
+    reg.register(adapter, 'full');
+
+    const summary = reg.getSummary();
+    expect(summary.total).toBe(1);
+    expect(summary.full).toBe(1);
   });
 });

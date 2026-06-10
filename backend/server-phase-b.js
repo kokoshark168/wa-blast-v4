@@ -61,8 +61,10 @@ const logger = pino(
 
 // === Middleware ===
 app.use(cors());
-app.use(express.json({ limit: '50mb' }));
-app.use(express.urlencoded({ limit: '50mb', extended: true }));
+// This API only receives JSON payloads (webhooks, small requests) — a large
+// body limit is an easy memory-exhaustion DoS vector.
+app.use(express.json({ limit: '1mb' }));
+app.use(express.urlencoded({ limit: '1mb', extended: true }));
 
 // === Initialize Adapters ===
 function initializeAdapters() {
@@ -152,7 +154,12 @@ app.get('/api', (req, res) => {
   });
 });
 
-// === Error Handlers ===
+// === 404 (must come before the error handler) ===
+app.use((req, res) => {
+  res.status(404).json({ error: 'Not found' });
+});
+
+// === Error Handler ===
 app.use((err, req, res, next) => {
   logger.error(err);
   res.status(err.status || 500).json({
@@ -161,13 +168,20 @@ app.use((err, req, res, next) => {
   });
 });
 
-app.use((req, res) => {
-  res.status(404).json({ error: 'Not found' });
-});
-
 // === Graceful Shutdown ===
+let shuttingDown = false;
 function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
   logger.info('🛑 Shutting down...');
+
+  try {
+    if (server) {
+      server.close();
+    }
+  } catch (e) {
+    logger.error(`HTTP server close error: ${e.message}`);
+  }
 
   try {
     if (telegramBot) {
@@ -191,6 +205,10 @@ process.on('SIGTERM', shutdown);
 process.on('SIGINT', shutdown);
 
 // === Startup ===
+if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 16) {
+  logger.warn('⚠️ JWT_SECRET is missing or too short (min 16 chars) — authenticated endpoints will refuse requests');
+}
+
 initializeAdapters();
 initializeBot();
 

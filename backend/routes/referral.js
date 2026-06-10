@@ -36,15 +36,18 @@ router.get('/stats', verifyAuth, async (req, res) => {
 });
 
 // Apply referral code (registration)
-router.post('/apply', async (req, res) => {
+// SECURITY: authenticated, and the referred user is always the caller —
+// accepting an arbitrary user_id allowed referral/commission fraud.
+router.post('/apply', verifyAuth, async (req, res) => {
   try {
-    const { user_id, referral_code } = req.body;
+    const { referral_code } = req.body;
+    const userId = req.state.userId;
 
-    if (!user_id || !referral_code) {
-      return res.status(400).json({ error: 'user_id and referral_code required' });
+    if (!referral_code || typeof referral_code !== 'string') {
+      return res.status(400).json({ error: 'referral_code required' });
     }
 
-    const result = await referralService.applyReferralCode(user_id, referral_code);
+    const result = await referralService.applyReferralCode(userId, referral_code.trim().toUpperCase());
     res.json(result);
   } catch (error) {
     logger.error(`Apply referral code error: ${error.message}`);
@@ -58,15 +61,16 @@ router.post('/withdrawal', verifyAuth, async (req, res) => {
     const userId = req.state.userId;
     const { amount, wallet_address } = req.body;
 
-    if (!amount || !wallet_address) {
+    const numericAmount = Number(amount);
+    if (!Number.isFinite(numericAmount) || !wallet_address || typeof wallet_address !== 'string') {
       return res.status(400).json({ error: 'amount and wallet_address required' });
     }
 
-    if (amount < 1) {
+    if (numericAmount < 1) {
       return res.status(400).json({ error: 'Minimum withdrawal is $1' });
     }
 
-    const withdrawal = await referralService.requestWithdrawal(userId, amount, wallet_address);
+    const withdrawal = await referralService.requestWithdrawal(userId, numericAmount, wallet_address);
     res.json(withdrawal);
   } catch (error) {
     logger.error(`Request withdrawal error: ${error.message}`);

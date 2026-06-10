@@ -13,8 +13,8 @@ export class TelegramUploadWorker {
   constructor(options = {}) {
     this.botApiUrl = options.botApiUrl || process.env.TELEGRAM_BOT_API_URL || 'http://localhost:8081';
     this.botToken = options.botToken || process.env.TELEGRAM_BOT_TOKEN;
-    this.channelId = options.channelId || '@dramabotchannel'; // Dummy channel for file upload
-    this.timeout = options.timeout || 60000; // 1 minute
+    this.channelId = options.channelId || process.env.TELEGRAM_UPLOAD_CHANNEL_ID || '@dramabotchannel'; // Storage channel for file uploads
+    this.timeout = options.timeout || parseInt(process.env.UPLOAD_TIMEOUT_MS, 10) || 600000; // 10 minutes for multi-GB uploads
   }
 
   /**
@@ -32,11 +32,14 @@ export class TelegramUploadWorker {
       const fileSize = fs.statSync(filePath).size;
       logger.info(`Uploading video: ${fileName} (${this.formatSize(fileSize)})`);
 
+      // Hash once (streamed — merged parts can be multiple GB)
+      const fileHash = await this.hashFile(filePath);
+
       // Check if already cached
       const cached = db.prepare(`
         SELECT file_id FROM file_cache
         WHERE file_hash = ?
-      `).get(this.hashFile(filePath));
+      `).get(fileHash);
 
       if (cached) {
         logger.info(`Using cached file_id: ${cached.file_id}`);
@@ -50,7 +53,7 @@ export class TelegramUploadWorker {
       db.prepare(`
         INSERT OR IGNORE INTO file_cache (file_path, file_hash, file_id, created_at)
         VALUES (?, ?, ?, datetime('now'))
-      `).run(filePath, this.hashFile(filePath), fileId);
+      `).run(filePath, fileHash, fileId);
 
       logger.info(`Video uploaded successfully. file_id: ${fileId}`);
       return fileId;
@@ -65,19 +68,28 @@ export class TelegramUploadWorker {
    */
   async uploadViaBotApi(filePath, fileName) {
     try {
-      const fileStream = fs.createReadStream(filePath);
+      if (!this.botToken) {
+        throw new Error('TELEGRAM_BOT_TOKEN is not configured');
+      }
 
-      // FormData for multipart upload
+      // Native fetch FormData requires a Blob/File — Node ReadStreams are not
+      // supported. fs.openAsBlob (Node >= 19.8) streams the file lazily so
+      // multi-GB merged parts are not buffered in memory.
+      const blob = typeof fs.openAsBlob === 'function'
+        ? await fs.openAsBlob(filePath)
+        : new Blob([fs.readFileSync(filePath)]);
+
       const formData = new FormData();
       formData.append('chat_id', this.channelId);
-      formData.append('video', fileStream, fileName);
+      formData.append('video', blob, fileName);
 
       const response = await fetch(
         `${this.botApiUrl}/bot${this.botToken}/sendVideo`,
         {
           method: 'POST',
           body: formData,
-          timeout: this.timeout
+          // fetch() has no `timeout` option; AbortSignal is the supported mechanism
+          signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(this.timeout) : undefined
         }
       );
 
@@ -133,12 +145,14 @@ export class TelegramUploadWorker {
       const fileUrl = `${this.botApiUrl}/file/bot${this.botToken}/${fileInfo.file_path}`;
 
       const response = await fetch(fileUrl);
-      if (!response.ok) {
+      if (!response.ok || !response.body) {
         throw new Error(`Download failed: HTTP ${response.status}`);
       }
 
-      const buffer = await response.arrayBuffer();
-      fs.writeFileSync(outputPath, Buffer.from(buffer));
+      // Stream to disk — files can be up to 2GB
+      const { Readable } = await import('stream');
+      const { pipeline } = await import('stream/promises');
+      await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(outputPath));
 
       logger.info(`File downloaded: ${outputPath}`);
       return outputPath;
@@ -149,11 +163,16 @@ export class TelegramUploadWorker {
   }
 
   /**
-   * Hash file for caching
+   * Hash file for caching (streamed, not buffered in memory)
    */
   hashFile(filePath) {
-    const fileBuffer = fs.readFileSync(filePath);
-    return crypto.createHash('sha256').update(fileBuffer).digest('hex');
+    return new Promise((resolve, reject) => {
+      const hash = crypto.createHash('sha256');
+      const stream = fs.createReadStream(filePath);
+      stream.on('error', reject);
+      stream.on('data', chunk => hash.update(chunk));
+      stream.on('end', () => resolve(hash.digest('hex')));
+    });
   }
 
   /**

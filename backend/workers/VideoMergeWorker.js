@@ -9,7 +9,6 @@ import pino from 'pino';
 import db from '../utils/db.js';
 import { registry } from '../adapters/registry.js';
 import { TelegramUploadWorker } from './TelegramUploadWorker.js';
-import crypto from 'crypto';
 
 const logger = pino();
 
@@ -17,9 +16,9 @@ export class VideoMergeWorker {
   constructor(options = {}) {
     this.ffmpegPath = options.ffmpegPath || 'ffmpeg';
     this.uploadWorker = new TelegramUploadWorker(options);
-    this.tempDir = options.tempDir || './uploads/temp';
-    this.outputDir = options.outputDir || './uploads/merged';
-    this.timeout = options.timeout || 300000; // 5 minutes
+    this.tempDir = options.tempDir || process.env.TEMP_DIR || './uploads/temp';
+    this.outputDir = options.outputDir || process.env.OUTPUT_DIR || './uploads/merged';
+    this.timeout = options.timeout || parseInt(process.env.FFMPEG_TIMEOUT, 10) || 300000; // 5 minutes
 
     this.ensureDirectories();
   }
@@ -43,6 +42,10 @@ export class VideoMergeWorker {
     logger.info(`Starting merge for drama ${dramaId} from ${sourceAdapter}`);
 
     try {
+      // drama_parts.drama_id is an INTEGER FK to dramas.id — resolve the
+      // external (adapter) id to the internal row id before any insert.
+      const dramaRowId = this.resolveDramaRowId(dramaId, sourceAdapter, { create: true });
+
       // Get episodes
       let episodes = [];
       let page = 1;
@@ -94,12 +97,12 @@ export class VideoMergeWorker {
 
           // Save to database
           db.prepare(`
-            INSERT INTO drama_parts (drama_id, part_number, episodes_start, episodes_end, file_id, created_at)
-            VALUES (?, ?, ?, ?, ?, datetime('now'))
+            INSERT INTO drama_parts (drama_id, source, part_number, episodes_start, episodes_end, file_id, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
             ON CONFLICT(drama_id, part_number) DO UPDATE SET
               file_id = excluded.file_id,
               updated_at = datetime('now')
-          `).run(dramaId, partNumber, i + 1, Math.min(i + episodesPerPart, episodes.length), fileId);
+          `).run(dramaRowId, sourceAdapter || null, partNumber, i + 1, Math.min(i + episodesPerPart, episodes.length), fileId);
         } catch (error) {
           logger.error(`Failed to merge part ${partNumber}: ${error.message}`);
           parts.push({
@@ -122,13 +125,16 @@ export class VideoMergeWorker {
    * Merge a single part (episodes) into one video
    */
   async mergePart(dramaId, sourceAdapter, partNumber, episodes) {
-    const partName = `${dramaId}-part-${partNumber}`;
+    // Sanitize: dramaId is user-controlled and must not influence file paths
+    // (e.g. "../../etc" would escape tempDir/outputDir)
+    const safeDramaId = String(dramaId).replace(/[^a-zA-Z0-9_-]/g, '_');
+    const partName = `${safeDramaId}-part-${partNumber}`;
     const concatFile = path.join(this.tempDir, `${partName}-concat.txt`);
     const outputFile = path.join(this.outputDir, `${partName}.mp4`);
+    const downloadedFiles = [];
 
     try {
       // Download episode URLs
-      const downloadedFiles = [];
       const fileList = [];
 
       for (let i = 0; i < episodes.length; i++) {
@@ -162,31 +168,56 @@ export class VideoMergeWorker {
       // Upload to Telegram and get file_id
       const fileId = await this.uploadWorker.uploadVideo(outputFile, `${partName}.mp4`);
 
-      // Cleanup
-      downloadedFiles.forEach(f => {
-        try { fs.unlinkSync(f); } catch (e) {}
-      });
-      try { fs.unlinkSync(concatFile); } catch (e) {}
-
       return fileId;
     } catch (error) {
       logger.error(`Merge part error: ${error.message}`);
       throw error;
+    } finally {
+      // Always clean up temp/output artifacts, including on failure
+      for (const f of downloadedFiles) {
+        try { fs.unlinkSync(f); } catch (e) { /* already gone */ }
+      }
+      try { fs.unlinkSync(concatFile); } catch (e) { /* already gone */ }
+      try { fs.unlinkSync(outputFile); } catch (e) { /* already gone */ }
     }
   }
 
   /**
-   * Download video from URL (mocked in tests)
+   * Resolve the internal dramas.id for an external adapter drama id.
+   * Optionally creates a minimal catalog row so FK constraints are satisfied.
+   */
+  resolveDramaRowId(externalId, source, { create = false } = {}) {
+    const row = db.prepare('SELECT id FROM dramas WHERE external_id = ?').get(String(externalId));
+    if (row) return row.id;
+    if (!create) return null;
+
+    const result = db.prepare(`
+      INSERT INTO dramas (external_id, source, title, created_at, updated_at)
+      VALUES (?, ?, ?, datetime('now'), datetime('now'))
+    `).run(String(externalId), source || 'unknown', String(externalId));
+    return result.lastInsertRowid;
+  }
+
+  /**
+   * Download video from URL (streamed to disk; mocked in tests)
    */
   async downloadVideo(url, outputPath) {
-    return new Promise((resolve, reject) => {
-      // This would be a real download implementation
-      // For now, in tests this will be mocked
-      logger.debug(`Downloading: ${url} -> ${outputPath}`);
-      // In production, use a download library like 'got' or 'axios'
-      // This is a placeholder
-      resolve(outputPath);
+    logger.debug(`Downloading: ${url} -> ${outputPath}`);
+
+    const response = await fetch(url, {
+      signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(this.timeout) : undefined
     });
+
+    if (!response.ok || !response.body) {
+      throw new Error(`Download failed: HTTP ${response.status}`);
+    }
+
+    // Stream to disk — episodes can be large, never buffer them in memory
+    const { Readable } = await import('stream');
+    const { pipeline } = await import('stream/promises');
+    await pipeline(Readable.fromWeb(response.body), fs.createWriteStream(outputPath));
+
+    return outputPath;
   }
 
   /**
@@ -236,20 +267,25 @@ export class VideoMergeWorker {
   }
 
   /**
-   * Check if drama is already merged and cached
+   * Check if drama is already merged and cached.
+   * Accepts the external (adapter) drama id as used by the API routes.
    */
   getCachedParts(dramaId) {
     return db.prepare(`
-      SELECT * FROM drama_parts
-      WHERE drama_id = ?
-      ORDER BY part_number ASC
-    `).all(dramaId);
+      SELECT dp.* FROM drama_parts dp
+      JOIN dramas d ON dp.drama_id = d.id
+      WHERE d.external_id = ?
+      ORDER BY dp.part_number ASC
+    `).all(String(dramaId));
   }
 
   /**
-   * Clear cached parts
+   * Clear cached parts (external drama id)
    */
   clearCache(dramaId) {
-    db.prepare('DELETE FROM drama_parts WHERE drama_id = ?').run(dramaId);
+    db.prepare(`
+      DELETE FROM drama_parts
+      WHERE drama_id IN (SELECT id FROM dramas WHERE external_id = ?)
+    `).run(String(dramaId));
   }
 }

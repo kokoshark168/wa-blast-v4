@@ -74,9 +74,10 @@ router.get('/:dramaId', async (req, res) => {
 router.get('/:dramaId/episodes', async (req, res) => {
   try {
     const { dramaId } = req.params;
-    const { source, page = 1 } = req.query;
+    const { source } = req.query;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
 
-    const episodes = await registry.getEpisodes(dramaId, source, parseInt(page));
+    const episodes = await registry.getEpisodes(dramaId, source, page);
     res.json({ count: episodes.length, episodes });
   } catch (error) {
     logger.error(`Get episodes error: ${error.message}`);
@@ -95,6 +96,10 @@ router.post('/:dramaId/request-video', verifyAuth, async (req, res) => {
     const user = db.prepare(`
       SELECT vip_tier, vip_expires_at FROM users WHERE id = ?
     `).get(userId);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
 
     const now = new Date();
     const expiresAt = user.vip_expires_at ? new Date(user.vip_expires_at) : null;

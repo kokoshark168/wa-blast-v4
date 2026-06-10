@@ -2,28 +2,42 @@
  * Bot Routes - Telegram webhook and bot management
  */
 import express from 'express';
+import crypto from 'crypto';
 import pino from 'pino';
-import db from '../utils/db.js';
 import { registry } from '../adapters/registry.js';
 
 const router = express.Router();
 const logger = pino();
 
 // Telegram webhook
+// NOTE: Telegram authenticates webhooks via the X-Telegram-Bot-Api-Secret-Token
+// header, which echoes the secret_token passed to setWebhook(). It never sends
+// the bot token itself. Configure TELEGRAM_WEBHOOK_SECRET to the same value
+// used in setWebhook.
 router.post('/webhook', async (req, res) => {
   try {
-    const update = req.body;
-
-    logger.debug(`Webhook update: ${update.update_id}`);
-
-    // Verify webhook token
-    const token = req.headers['x-telegram-bot-token'];
-    if (token !== process.env.TELEGRAM_BOT_TOKEN) {
-      logger.warn('Invalid webhook token');
+    const expectedSecret = process.env.TELEGRAM_WEBHOOK_SECRET;
+    if (!expectedSecret) {
+      logger.error('TELEGRAM_WEBHOOK_SECRET not configured; rejecting webhook');
       return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    // Process update (delegated to bot instance in main.js)
+    const provided = req.headers['x-telegram-bot-api-secret-token'] || '';
+    const expectedBuf = Buffer.from(expectedSecret);
+    const providedBuf = Buffer.from(String(provided));
+    const valid = expectedBuf.length === providedBuf.length &&
+      crypto.timingSafeEqual(expectedBuf, providedBuf);
+
+    if (!valid) {
+      logger.warn('Invalid webhook secret token');
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    logger.debug(`Webhook update: ${req.body?.update_id}`);
+
+    // Process update (delegated to bot instance; polling mode is the default
+    // in server-phase-b.js — wire grammY's webhookCallback here when switching
+    // to webhook mode)
     res.json({ ok: true });
   } catch (error) {
     logger.error(`Webhook error: ${error.message}`);

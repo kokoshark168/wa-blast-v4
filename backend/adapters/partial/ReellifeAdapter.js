@@ -14,8 +14,8 @@ export class ReellifeAdapter extends BaseAdapter {
     });
   }
 
-  async validate() {
-    return this.baseUrl ? true : false;
+  validate() {
+    return Boolean(this.baseUrl);
   }
 
   async search(query) {

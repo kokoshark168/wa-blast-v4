@@ -26,6 +26,14 @@ export class AdapterRegistry {
       return false;
     }
 
+    // Re-registering replaces the previous instance instead of duplicating it
+    if (this.adapters.has(adapter.name)) {
+      const previous = this.adapters.get(adapter.name);
+      this.fullAdapters = this.fullAdapters.filter(a => a !== previous);
+      this.partialAdapters = this.partialAdapters.filter(a => a !== previous);
+      this.searchOnlyAdapters = this.searchOnlyAdapters.filter(a => a !== previous);
+    }
+
     this.adapters.set(adapter.name, adapter);
 
     if (group === 'full') {

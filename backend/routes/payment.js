@@ -40,6 +40,15 @@ router.post('/invoice', verifyAuth, async (req, res) => {
 // Check payment status
 router.get('/invoice/:paymentId', verifyAuth, async (req, res) => {
   try {
+    // Ownership check: users may only poll their own payments
+    const payment = db.prepare(`
+      SELECT user_id FROM payments WHERE payment_id = ? OR order_id = ?
+    `).get(req.params.paymentId, req.params.paymentId);
+
+    if (!payment || payment.user_id !== req.state.userId) {
+      return res.status(404).json({ error: 'Payment not found' });
+    }
+
     const status = await paymentGateway.getPaymentStatus(req.params.paymentId);
     res.json(status);
   } catch (error) {

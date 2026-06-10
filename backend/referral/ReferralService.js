@@ -29,14 +29,27 @@ export class ReferralService {
         return referral;
       }
 
-      // Generate new code
-      const code = this.generateCode();
-
-      // Save to database
-      this.db.prepare(`
-        INSERT INTO referral_codes (user_id, code, total_earned, pending_balance, created_at)
-        VALUES (?, ?, 0, 0, datetime('now'))
-      `).run(userId, code);
+      // Generate new code, retrying on the (unlikely) UNIQUE collision
+      let code = null;
+      for (let attempt = 0; attempt < 5; attempt++) {
+        const candidate = this.generateCode();
+        try {
+          this.db.prepare(`
+            INSERT INTO referral_codes (user_id, code, total_earned, pending_balance, created_at)
+            VALUES (?, ?, 0, 0, datetime('now'))
+          `).run(userId, candidate);
+          code = candidate;
+          break;
+        } catch (error) {
+          // Another request may have created this user's code concurrently
+          const existing = this.db.prepare(`
+            SELECT code, total_earned, pending_balance FROM referral_codes WHERE user_id = ?
+          `).get(userId);
+          if (existing) return existing;
+          // Otherwise it was a code collision — retry with a new candidate
+          if (attempt === 4) throw error;
+        }
+      }
 
       return { code, total_earned: 0, pending_balance: 0 };
     } catch (error) {
@@ -50,10 +63,15 @@ export class ReferralService {
    */
   async applyReferralCode(referredUserId, code) {
     try {
+      if (!code || typeof code !== 'string') {
+        throw new Error('Referral code required');
+      }
+      const normalizedCode = code.trim().toUpperCase();
+
       // Find referrer
       const referrer = this.db.prepare(`
         SELECT user_id FROM referral_codes WHERE code = ?
-      `).get(code);
+      `).get(normalizedCode);
 
       if (!referrer) {
         throw new Error(`Invalid referral code: ${code}`);
@@ -110,19 +128,21 @@ export class ReferralService {
         return null;
       }
 
-      // Record earning
-      this.db.prepare(`
-        INSERT INTO referral_earnings (referrer_id, referred_user_id, amount, status, created_at)
-        VALUES (?, ?, ?, 'earned', datetime('now'))
-      `).run(referral.referrer_id, referredUserId, this.commissionPerVIP);
+      // Record earning + update totals atomically
+      const awardTx = this.db.transaction(() => {
+        this.db.prepare(`
+          INSERT INTO referral_earnings (referrer_id, referred_user_id, amount, status, created_at)
+          VALUES (?, ?, ?, 'earned', datetime('now'))
+        `).run(referral.referrer_id, referredUserId, this.commissionPerVIP);
 
-      // Update referral code totals
-      this.db.prepare(`
-        UPDATE referral_codes
-        SET total_earned = total_earned + ?,
-            pending_balance = pending_balance + ?
-        WHERE user_id = ?
-      `).run(this.commissionPerVIP, this.commissionPerVIP, referral.referrer_id);
+        this.db.prepare(`
+          UPDATE referral_codes
+          SET total_earned = total_earned + ?,
+              pending_balance = pending_balance + ?
+          WHERE user_id = ?
+        `).run(this.commissionPerVIP, this.commissionPerVIP, referral.referrer_id);
+      });
+      awardTx();
 
       logger.info(`Commission awarded: $${this.commissionPerVIP} to user ${referral.referrer_id}`);
       return {
@@ -172,26 +192,41 @@ export class ReferralService {
    */
   async requestWithdrawal(userId, amount, walletAddress) {
     try {
-      // Check balance
-      const codeData = this.db.prepare(`
-        SELECT pending_balance FROM referral_codes WHERE user_id = ?
-      `).get(userId);
-
-      if (!codeData || codeData.pending_balance < amount) {
-        throw new Error('Insufficient balance for withdrawal');
+      // Validate inputs (defense in depth — routes validate too)
+      const numericAmount = Number(amount);
+      if (!Number.isFinite(numericAmount) || numericAmount <= 0) {
+        throw new Error('Withdrawal amount must be a positive number');
+      }
+      if (!walletAddress || typeof walletAddress !== 'string' || walletAddress.trim().length < 10) {
+        throw new Error('A valid wallet address is required');
       }
 
-      // Create withdrawal request
-      const result = this.db.prepare(`
-        INSERT INTO withdrawals (user_id, amount, wallet_address, status, requested_at)
-        VALUES (?, ?, ?, 'pending', datetime('now'))
-      `).run(userId, amount, walletAddress);
+      // Atomically hold the funds: deduct pending_balance when the request is
+      // created so concurrent/duplicate requests cannot over-withdraw.
+      const requestTx = this.db.transaction(() => {
+        const hold = this.db.prepare(`
+          UPDATE referral_codes
+          SET pending_balance = pending_balance - ?
+          WHERE user_id = ? AND pending_balance >= ?
+        `).run(numericAmount, userId, numericAmount);
 
-      logger.info(`Withdrawal requested: $${amount} for user ${userId}`);
+        if (hold.changes === 0) {
+          throw new Error('Insufficient balance for withdrawal');
+        }
+
+        return this.db.prepare(`
+          INSERT INTO withdrawals (user_id, amount, wallet_address, status, requested_at)
+          VALUES (?, ?, ?, 'pending', datetime('now'))
+        `).run(userId, numericAmount, walletAddress.trim());
+      });
+
+      const result = requestTx();
+
+      logger.info(`Withdrawal requested: $${numericAmount} for user ${userId}`);
 
       return {
         withdrawal_id: result.lastInsertRowid,
-        amount,
+        amount: numericAmount,
         status: 'pending',
         requested_at: new Date().toISOString()
       };
@@ -203,30 +238,30 @@ export class ReferralService {
 
   /**
    * Approve withdrawal (admin)
+   * Funds were already held at request time, so approval only marks it paid.
    */
   async approveWithdrawal(withdrawalId, transactionId) {
     try {
       const withdrawal = this.db.prepare(`
-        SELECT user_id, amount FROM withdrawals WHERE id = ?
+        SELECT user_id, amount, status FROM withdrawals WHERE id = ?
       `).get(withdrawalId);
 
       if (!withdrawal) {
         throw new Error(`Withdrawal not found: ${withdrawalId}`);
       }
+      if (withdrawal.status !== 'pending') {
+        throw new Error(`Withdrawal ${withdrawalId} is already ${withdrawal.status}`);
+      }
 
-      // Update withdrawal
-      this.db.prepare(`
+      const updated = this.db.prepare(`
         UPDATE withdrawals
         SET status = 'approved', transaction_id = ?, approved_at = datetime('now')
-        WHERE id = ?
+        WHERE id = ? AND status = 'pending'
       `).run(transactionId, withdrawalId);
 
-      // Reduce pending balance
-      this.db.prepare(`
-        UPDATE referral_codes
-        SET pending_balance = pending_balance - ?
-        WHERE user_id = ?
-      `).run(withdrawal.amount, withdrawal.user_id);
+      if (updated.changes === 0) {
+        throw new Error(`Withdrawal ${withdrawalId} could not be approved`);
+      }
 
       logger.info(`Withdrawal approved: ${withdrawalId} (tx: ${transactionId})`);
       return { status: 'approved', transaction_id: transactionId };
@@ -237,15 +272,41 @@ export class ReferralService {
   }
 
   /**
-   * Reject withdrawal (admin)
+   * Reject withdrawal (admin) — releases the held funds back to the user.
    */
   async rejectWithdrawal(withdrawalId, reason) {
     try {
-      this.db.prepare(`
-        UPDATE withdrawals
-        SET status = 'rejected', rejection_reason = ?, rejected_at = datetime('now')
-        WHERE id = ?
-      `).run(reason, withdrawalId);
+      const withdrawal = this.db.prepare(`
+        SELECT user_id, amount, status FROM withdrawals WHERE id = ?
+      `).get(withdrawalId);
+
+      if (!withdrawal) {
+        throw new Error(`Withdrawal not found: ${withdrawalId}`);
+      }
+      if (withdrawal.status !== 'pending') {
+        throw new Error(`Withdrawal ${withdrawalId} is already ${withdrawal.status}`);
+      }
+
+      const rejectTx = this.db.transaction(() => {
+        const updated = this.db.prepare(`
+          UPDATE withdrawals
+          SET status = 'rejected', rejection_reason = ?, rejected_at = datetime('now')
+          WHERE id = ? AND status = 'pending'
+        `).run(reason || null, withdrawalId);
+
+        if (updated.changes === 0) {
+          throw new Error(`Withdrawal ${withdrawalId} could not be rejected`);
+        }
+
+        // Refund the held amount
+        this.db.prepare(`
+          UPDATE referral_codes
+          SET pending_balance = pending_balance + ?
+          WHERE user_id = ?
+        `).run(withdrawal.amount, withdrawal.user_id);
+      });
+
+      rejectTx();
 
       logger.info(`Withdrawal rejected: ${withdrawalId}`);
       return { status: 'rejected' };
@@ -256,13 +317,13 @@ export class ReferralService {
   }
 
   /**
-   * Generate unique referral code
+   * Generate referral code using a CSPRNG (Math.random is predictable)
    */
   generateCode() {
     const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
     let code = '';
     for (let i = 0; i < 8; i++) {
-      code += chars.charAt(Math.floor(Math.random() * chars.length));
+      code += chars.charAt(crypto.randomInt(chars.length));
     }
     return code;
   }

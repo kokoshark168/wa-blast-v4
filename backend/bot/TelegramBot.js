@@ -7,8 +7,7 @@
  * - VIP checking - verify subscription before sending
  * - Referral tracking - commission on successful sends
  */
-import grammy from 'grammy';
-const { Bot, InlineQueryResultArticle, InputTextMessageContent } = grammy;
+import { Bot } from 'grammy';
 import pino from 'pino';
 import db from '../utils/db.js';
 import { registry } from '../adapters/registry.js';
@@ -100,25 +99,26 @@ export class TelegramBot {
           return await ctx.answerInlineQuery([]);
         }
 
-        const inlineResults = results.slice(0, 50).map(drama =>
-          new InlineQueryResultArticle(
-            drama.id || `drama-${Math.random()}`,
-            drama.title || 'Unknown',
-            new InputTextMessageContent(
-              `📺 *${drama.title || 'Unknown'}*\n\n` +
-              `Year: ${drama.year}\n` +
+        // grammY does not export result classes; inline results are plain objects
+        // matching the Telegram Bot API InlineQueryResult schema.
+        // IDs must be unique per answer (max 64 bytes), so include the index.
+        const inlineResults = results.slice(0, 50).map((drama, index) => ({
+          type: 'article',
+          id: `${index}-${String(drama.id ?? 'unknown')}`.slice(0, 64),
+          title: drama.title || 'Unknown',
+          description: `${drama.year || '?'} • ${drama.total_episodes || '?'} episodes • ${drama.source || 'Unknown'}`,
+          ...(drama.image ? { thumbnail_url: drama.image } : {}),
+          input_message_content: {
+            // Plain text (no parse_mode): titles may contain Markdown control chars
+            message_text:
+              `📺 ${drama.title || 'Unknown'}\n\n` +
+              `Year: ${drama.year || '?'}\n` +
               `Episodes: ${drama.total_episodes || '?'}\n` +
               `Rating: ${drama.rating || 'N/A'}\n` +
               `Source: ${drama.source || 'Unknown'}\n\n` +
-              `_Use /getvideo drama_id to request the merged video._`
-            ),
-            {
-              description: `${drama.year} • ${drama.total_episodes || '?'} episodes • ${drama.source}`,
-              thumbnail_url: drama.image,
-              parse_mode: 'Markdown'
-            }
-          )
-        );
+              `Use /getvideo ${drama.id ?? ''} to request the merged video.`
+          }
+        }));
 
         await ctx.answerInlineQuery(inlineResults, {
           cache_time: 300, // Cache for 5 minutes
@@ -152,7 +152,7 @@ export class TelegramBot {
         const isActive = expiresAt && expiresAt > now;
 
         let message = `💎 *Your VIP Status*\n\n`;
-        message += `Tier: ${user.vip_tier.toUpperCase()}\n`;
+        message += `Tier: ${(user.vip_tier || 'free').toUpperCase()}\n`;
         message += `Status: ${isActive ? '✅ ACTIVE' : '❌ INACTIVE'}\n`;
 
         if (expiresAt) {
@@ -272,11 +272,17 @@ export class TelegramBot {
   }
 
   /**
-   * Stop bot
+   * Stop bot (safe to call even if polling was never started)
    */
   async stop() {
-    await this.bot.stop();
-    logger.info('Bot stopped');
+    try {
+      if (this.bot.isRunning()) {
+        await this.bot.stop();
+      }
+      logger.info('Bot stopped');
+    } catch (error) {
+      logger.warn(`Bot stop error: ${error.message}`);
+    }
   }
 }
 

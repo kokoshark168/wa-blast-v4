@@ -1,15 +1,10 @@
-import Database from 'better-sqlite3';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-const dbPath = process.env.DATABASE_PATH || path.join(__dirname, 'drama.db');
-const db = new Database(dbPath);
-
-db.pragma('journal_mode = WAL');
-db.pragma('foreign_keys = ON');
+/**
+ * Database schema initialization.
+ * Uses the single shared connection from utils/db.js — opening a second
+ * connection here previously risked initializing a different file than the
+ * one the application actually queries.
+ */
+import db from '../utils/db.js';
 
 const schema = `
 -- Users table
@@ -105,6 +100,7 @@ CREATE TABLE IF NOT EXISTS payments (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   user_id INTEGER NOT NULL,
   payment_id TEXT UNIQUE,
+  order_id TEXT UNIQUE,
   status TEXT,
   amount REAL,
   currency TEXT,
@@ -174,20 +170,36 @@ CREATE INDEX IF NOT EXISTS idx_drama_parts_drama_id ON drama_parts(drama_id);
 CREATE INDEX IF NOT EXISTS idx_episode_sources_drama_id ON episode_sources(drama_id);
 CREATE INDEX IF NOT EXISTS idx_payments_user_id ON payments(user_id);
 CREATE INDEX IF NOT EXISTS idx_payments_status ON payments(status);
+CREATE INDEX IF NOT EXISTS idx_referrals_referred_user_id ON referrals(referred_user_id);
+CREATE INDEX IF NOT EXISTS idx_referral_earnings_referred ON referral_earnings(referred_user_id);
+CREATE INDEX IF NOT EXISTS idx_file_cache_hash ON file_cache(file_hash);
 CREATE INDEX IF NOT EXISTS idx_referrals_referrer_id ON referrals(referrer_id);
 CREATE INDEX IF NOT EXISTS idx_withdrawals_user_id ON withdrawals(user_id);
 CREATE INDEX IF NOT EXISTS idx_withdrawals_status ON withdrawals(status);
 `;
 
-const statements = schema.split(';').filter(s => s.trim());
-statements.forEach(statement => {
-  try {
-    db.exec(statement);
-  } catch (e) {
-    console.error('Error executing statement:', e.message);
-  }
-});
+// Execute the whole schema at once. Schema errors are fatal — silently
+// swallowing them would leave the app running against a broken database.
+db.exec(schema);
 
-console.log('✅ Database initialized:', dbPath);
+// Lightweight migrations for columns added after the initial release
+// (CREATE TABLE IF NOT EXISTS does not alter existing tables). These must run
+// before any index that references the new columns is created.
+const migrations = [
+  { table: 'payments', column: 'order_id', ddl: 'ALTER TABLE payments ADD COLUMN order_id TEXT' }
+];
+
+for (const m of migrations) {
+  const columns = db.prepare(`PRAGMA table_info(${m.table})`).all().map(c => c.name);
+  if (!columns.includes(m.column)) {
+    db.exec(m.ddl);
+    console.log(`✅ Migration applied: ${m.table}.${m.column}`);
+  }
+}
+
+// Indexes on migrated columns (created after the migrations above)
+db.exec('CREATE INDEX IF NOT EXISTS idx_payments_order_id ON payments(order_id)');
+
+console.log('✅ Database initialized');
 
 export default db;

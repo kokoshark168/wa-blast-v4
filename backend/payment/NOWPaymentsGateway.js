@@ -6,8 +6,10 @@
 import pino from 'pino';
 import crypto from 'crypto';
 import db from '../utils/db.js';
+import { ReferralService } from '../referral/ReferralService.js';
 
 const logger = pino();
+const referralService = new ReferralService(db);
 
 export class NOWPaymentsGateway {
   constructor(config = {}) {
@@ -29,6 +31,13 @@ export class NOWPaymentsGateway {
   async createInvoice(options) {
     const { userId, amount, currency = 'USDTERC20', tier = 'premium', webhookUrl } = options;
 
+    if (!userId) throw new Error('userId is required');
+    if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+      throw new Error('amount must be a positive number');
+    }
+
+    const orderId = `order-${userId}-${Date.now()}`;
+
     try {
       const response = await this._request('/invoice', {
         method: 'POST',
@@ -36,7 +45,7 @@ export class NOWPaymentsGateway {
           price_amount: amount,
           price_currency: 'USD',
           pay_currency: currency,
-          order_id: `order-${userId}-${Date.now()}`,
+          order_id: orderId,
           order_description: `VIP ${tier} Subscription`,
           notify_url: webhookUrl || process.env.WEBHOOK_URL,
           success_url: `${process.env.APP_URL}/vip/success`,
@@ -48,11 +57,12 @@ export class NOWPaymentsGateway {
         throw new Error('Invalid invoice response');
       }
 
-      // Store payment record
+      // Store payment record. order_id is the stable correlation key: the IPN
+      // webhook reports a payment_id that differs from the invoice id.
       db.prepare(`
-        INSERT INTO payments (user_id, payment_id, status, amount, currency, tier, created_at)
-        VALUES (?, ?, 'pending', ?, ?, ?, datetime('now'))
-      `).run(userId, response.id, amount, currency, tier);
+        INSERT INTO payments (user_id, payment_id, order_id, status, amount, currency, tier, created_at)
+        VALUES (?, ?, ?, 'pending', ?, ?, ?, datetime('now'))
+      `).run(userId, String(response.id), orderId, amount, currency, tier);
 
       logger.info(`Invoice created: ${response.id} for user ${userId}`);
 
@@ -103,17 +113,33 @@ export class NOWPaymentsGateway {
       return false;
     }
 
-    const sortedData = Object.keys(body)
-      .sort()
-      .map(key => `${key}=${body[key]}`)
-      .join('&');
+    if (!signature || typeof signature !== 'string' || !body || typeof body !== 'object') {
+      return false;
+    }
+
+    // NOWPayments IPN spec: HMAC-SHA512 over the JSON body with keys sorted
+    // alphabetically (recursively), hex-encoded.
+    const sortObject = (obj) => {
+      if (Array.isArray(obj)) return obj.map(sortObject);
+      if (obj && typeof obj === 'object') {
+        return Object.keys(obj).sort().reduce((acc, key) => {
+          acc[key] = sortObject(obj[key]);
+          return acc;
+        }, {});
+      }
+      return obj;
+    };
 
     const hash = crypto
       .createHmac('sha512', this.ipnSecret)
-      .update(sortedData)
+      .update(JSON.stringify(sortObject(body)))
       .digest('hex');
 
-    return hash === signature;
+    // Constant-time comparison to prevent timing attacks
+    const expected = Buffer.from(hash, 'utf8');
+    const provided = Buffer.from(signature, 'utf8');
+    if (expected.length !== provided.length) return false;
+    return crypto.timingSafeEqual(expected, provided);
   }
 
   /**
@@ -121,37 +147,63 @@ export class NOWPaymentsGateway {
    * Updates payment status and applies VIP upgrade if confirmed
    */
   async processWebhook(paymentData) {
-    const { id: paymentId, status, pay_amount, price_amount } = paymentData;
+    // IPN payloads use payment_id; invoice creation responses use id.
+    const paymentId = paymentData.payment_id ?? paymentData.id;
+    const orderId = paymentData.order_id;
+    const { payment_status, status: rawStatus, pay_amount } = paymentData;
+    const status = payment_status || rawStatus;
 
     try {
-      logger.info(`Processing webhook for payment ${paymentId}: status=${status}`);
+      logger.info(`Processing webhook for payment ${paymentId} (order ${orderId}): status=${status}`);
 
-      const payment = db.prepare(`
-        SELECT user_id, tier, status as old_status
-        FROM payments
-        WHERE payment_id = ?
-      `).get(paymentId);
+      if (!paymentId && !orderId) {
+        return { success: false, error: 'Missing payment identifier' };
+      }
+
+      // Correlate by order_id first (stable across invoice -> payment), then payment_id
+      const payment =
+        (orderId && db.prepare(`
+          SELECT id, user_id, tier, status as old_status FROM payments WHERE order_id = ?
+        `).get(orderId)) ||
+        (paymentId && db.prepare(`
+          SELECT id, user_id, tier, status as old_status FROM payments WHERE payment_id = ?
+        `).get(String(paymentId)));
 
       if (!payment) {
-        logger.warn(`Payment not found: ${paymentId}`);
+        logger.warn(`Payment not found: ${paymentId} / ${orderId}`);
         return { success: false, error: 'Payment not found' };
       }
 
-      // Update payment status
+      // Idempotency: once a payment reached a terminal success state, ignore
+      // further (possibly out-of-order or replayed) updates.
+      const terminal = ['finished', 'confirmed'];
+      if (terminal.includes(payment.old_status)) {
+        logger.info(`Payment ${payment.id} already ${payment.old_status}, skipping update`);
+        return { success: true, status: payment.old_status, skipped: true };
+      }
+
+      // Update payment status (also record the real payment_id from the IPN)
       db.prepare(`
         UPDATE payments
-        SET status = ?, pay_amount = ?, txid = ?, updated_at = datetime('now')
-        WHERE payment_id = ?
-      `).run(status, pay_amount, paymentData.txid, paymentId);
+        SET status = ?, payment_id = COALESCE(?, payment_id), pay_amount = ?, txid = ?, updated_at = datetime('now')
+        WHERE id = ?
+      `).run(status, paymentId ? String(paymentId) : null, pay_amount ?? null, paymentData.txid ?? null, payment.id);
 
-      // If payment confirmed, upgrade VIP
+      // If payment confirmed, upgrade VIP and award referral commission
       if (status === 'confirmed' || status === 'finished') {
         await this.upgradeVIP(payment.user_id, payment.tier);
+
+        try {
+          await referralService.awardCommission(payment.user_id);
+        } catch (error) {
+          // Commission failure must not block the user's upgrade
+          logger.error(`Referral commission error for user ${payment.user_id}: ${error.message}`);
+        }
       }
 
       // If payment failed, don't do anything (user can retry)
-      if (status === 'failed' || status === 'refunded') {
-        logger.warn(`Payment ${paymentId} failed or refunded`);
+      if (status === 'failed' || status === 'refunded' || status === 'expired') {
+        logger.warn(`Payment ${payment.id} ${status}`);
       }
 
       return { success: true, status };
@@ -172,7 +224,12 @@ export class NOWPaymentsGateway {
         plus: { storage: 500, concurrent: 20, bandwidth: 2000 }
       };
 
-      const tierConfig = tiers[tier] || tiers.free;
+      // Only known tiers may be written (users.vip_tier has a CHECK constraint)
+      if (!Object.prototype.hasOwnProperty.call(tiers, tier)) {
+        logger.warn(`Unknown tier "${tier}", defaulting to premium`);
+        tier = 'premium';
+      }
+      const tierConfig = tiers[tier];
       const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // 30 days
 
       db.prepare(`
@@ -233,6 +290,10 @@ export class NOWPaymentsGateway {
     const { method = 'GET', data = null } = options;
     const url = `${this.baseUrl}${endpoint}`;
 
+    if (!this.apiKey) {
+      throw new Error('NOWPayments API key is not configured');
+    }
+
     try {
       const response = await fetch(url, {
         method,
@@ -242,11 +303,13 @@ export class NOWPaymentsGateway {
           'x-api-key': this.apiKey
         },
         body: data ? JSON.stringify(data) : undefined,
-        timeout: this.timeout
+        // fetch() has no `timeout` option; AbortSignal is the supported mechanism
+        signal: typeof AbortSignal?.timeout === 'function' ? AbortSignal.timeout(this.timeout) : undefined
       });
 
       if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+        const errorBody = await response.text().catch(() => '');
+        throw new Error(`HTTP ${response.status}: ${response.statusText} ${errorBody}`.trim());
       }
 
       return await response.json();
