@@ -30,8 +30,14 @@ export function SessionProvider({ children }: { children: React.ReactNode }) {
     const storedUser = localStorage.getItem('user');
 
     if (storedToken && storedUser) {
-      setToken(storedToken);
-      setUser(JSON.parse(storedUser));
+      try {
+        setUser(JSON.parse(storedUser));
+        setToken(storedToken);
+      } catch {
+        // Corrupted session storage — clear it and fall through to logged-out.
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+      }
     }
 
     setIsLoading(false);

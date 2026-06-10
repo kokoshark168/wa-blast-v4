@@ -291,7 +291,8 @@ model Subscription {
 
 model AuditLog {
   id                    String    @id @default(cuid())
-  userId                String
+  // Nullable + SetNull: audit history must survive user deletion (immutability).
+  userId                String?
   action                AuditAction
   resourceType          String
   resourceId            String?
@@ -300,7 +301,7 @@ model AuditLog {
   userAgent             String?
   createdAt             DateTime  @default(now())
 
-  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                  User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
 
   @@index([userId])
   @@index([action])

@@ -1,6 +1,7 @@
 import type { NextApiResponse } from 'next';
 import { z } from 'zod';
 import { withAuth, type AuthedRequest } from '@/lib/auth/guard';
+import { featureEnabled } from '@/lib/features';
 import { prisma } from '@/lib/prisma';
 import { hyperliquid } from '@/services';
 import type { HyperliquidPosition } from '@/types';
@@ -18,6 +19,9 @@ const querySchema = z.object({
 async function handler(req: AuthedRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+  if (!featureEnabled('ENABLE_HYPERLIQUID')) {
+    return res.status(503).json({ error: 'Hyperliquid monitoring is disabled' });
   }
 
   const parsed = querySchema.safeParse(req.query);

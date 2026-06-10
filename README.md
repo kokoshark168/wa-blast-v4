@@ -84,7 +84,8 @@ Create a `.env` file based on `.env.example`:
 ```
 DATABASE_URL=postgresql://user:password@localhost:5432/alphaflow
 REDIS_URL=redis://localhost:6379
-JWT_SECRET=your-secret-key
+# Required in production: at least 32 chars (e.g. `openssl rand -base64 48`)
+JWT_SECRET=<generate-a-strong-32+-char-secret>
 NEXT_PUBLIC_API_URL=http://localhost:3000
 ```
 

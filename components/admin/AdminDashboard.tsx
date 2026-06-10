@@ -18,6 +18,50 @@ interface AdminStats {
   auditLog: { id: string; actor: string; action: string; target?: string; timestamp: number }[];
 }
 
+/** Raw shape of GET /api/admin/stats. */
+interface AdminStatsResponse {
+  counts: { users: number; wallets: number; alerts: number; transactions: number };
+  dataSourceHealth: { name: string; configured: boolean; reachable: boolean; latencyMs?: number }[];
+  recentAuditLogs: {
+    id: string;
+    action: string;
+    resourceType: string;
+    resourceId?: string | null;
+    createdAt: string;
+    user?: { email?: string } | null;
+  }[];
+}
+
+/** Raw shape of GET /api/admin/users (paginated). */
+interface AdminUsersResponse {
+  users: AdminUser[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
+function mapStats(raw: AdminStatsResponse): AdminStats {
+  return {
+    totalUsers: raw.counts?.users ?? 0,
+    totalWallets: raw.counts?.wallets ?? 0,
+    totalAlerts: raw.counts?.alerts ?? 0,
+    totalTransactions: raw.counts?.transactions ?? 0,
+    dataSources: (raw.dataSourceHealth ?? []).map((s) => ({
+      name: s.name,
+      healthy: s.configured && s.reachable,
+      latencyMs: s.latencyMs,
+    })),
+    auditLog: (raw.recentAuditLogs ?? []).map((a) => ({
+      id: a.id,
+      actor: a.user?.email ?? 'system',
+      action: a.action,
+      target: a.resourceId ? `${a.resourceType}:${a.resourceId}` : a.resourceType,
+      timestamp: new Date(a.createdAt).getTime(),
+    })),
+  };
+}
+
 interface AdminUser {
   id: string;
   email: string;
@@ -47,11 +91,14 @@ export function AdminDashboard({ role }: AdminDashboardProps) {
       return;
     }
     let active = true;
-    Promise.all([apiGet<AdminStats>('/api/admin/stats'), apiGet<AdminUser[]>('/api/admin/users')])
+    Promise.all([
+      apiGet<AdminStatsResponse>('/api/admin/stats'),
+      apiGet<AdminUsersResponse>('/api/admin/users'),
+    ])
       .then(([s, u]) => {
         if (!active) return;
-        setStats(s.data ?? null);
-        setUsers(u.data ?? []);
+        setStats(s.data ? mapStats(s.data) : null);
+        setUsers(u.data?.users ?? []);
         setDegraded(!!s.degraded || !!u.degraded);
       })
       .catch((e: Error) => active && setError(e.message))

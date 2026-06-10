@@ -1,6 +1,8 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { hashPassword } from '@/lib/auth/crypto';
+import { signToken } from '@/lib/auth/jwt';
 import { prisma } from '@/lib/prisma';
+import { audit } from '@/lib/audit';
 import { z } from 'zod';
 
 const registerSchema = z.object({
@@ -49,7 +51,18 @@ export default async function handler(
       },
     });
 
-    return res.status(201).json({ user });
+    const token = signToken({ userId: user.id, email: user.email });
+
+    await audit({
+      userId: user.id,
+      action: 'USER_CREATE',
+      resourceType: 'User',
+      resourceId: user.id,
+      ipAddress: (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.socket.remoteAddress || undefined,
+      userAgent: req.headers['user-agent'],
+    });
+
+    return res.status(201).json({ token, user });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ error: 'Invalid input', details: error.errors });

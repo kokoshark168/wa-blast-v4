@@ -63,11 +63,44 @@ export class WsHub {
   }
 }
 
+/**
+ * The minimal hub surface shared between this module and the plain-JS hub
+ * attached in server.js (which publishes itself on globalThis so API routes —
+ * running in the same process — can broadcast).
+ */
+export interface BroadcastHub {
+  broadcast<T>(message: WsMessage<T>): void;
+  readonly clientCount: number;
+}
+
+const HUB_GLOBAL_KEY = '__alphaflowWsHub';
+
 let hub: WsHub | null = null;
 export function initHub(server: Server): WsHub {
-  if (!hub) hub = new WsHub(server);
+  if (!hub) {
+    hub = new WsHub(server);
+    (globalThis as Record<string, unknown>)[HUB_GLOBAL_KEY] = hub;
+  }
   return hub;
 }
-export function getHub(): WsHub | null {
-  return hub;
+
+/** Resolve the active hub: in-module instance first, then the server.js-attached one. */
+export function getHub(): BroadcastHub | null {
+  if (hub) return hub;
+  const globalHub = (globalThis as Record<string, unknown>)[HUB_GLOBAL_KEY];
+  return (globalHub as BroadcastHub | undefined) ?? null;
+}
+
+/**
+ * Fire-and-forget broadcast helper for API routes. No-ops when the hub is not
+ * attached (e.g. `next dev` without the custom server, or tests).
+ */
+export function publishWs<T>(channel: WsChannel, event: string, data: T): void {
+  const h = getHub();
+  if (!h) return;
+  try {
+    h.broadcast({ channel, event, data, ts: Date.now() });
+  } catch (err) {
+    log.warn({ err, channel }, 'ws broadcast failed');
+  }
 }

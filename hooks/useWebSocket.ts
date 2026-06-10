@@ -18,8 +18,10 @@ export function useWebSocket({ channels, onMessage }: UseWebSocketOptions) {
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectRef = useRef<ReturnType<typeof setTimeout>>();
   const attemptsRef = useRef(0);
+  const disposedRef = useRef(false);
 
   const connect = useCallback(() => {
+    if (disposedRef.current) return;
     const base = process.env.NEXT_PUBLIC_WS_URL || `ws://${typeof window !== 'undefined' ? window.location.host : 'localhost:3000'}`;
     const socket = new WebSocket(`${base}/ws`);
     socketRef.current = socket;
@@ -44,6 +46,8 @@ export function useWebSocket({ channels, onMessage }: UseWebSocketOptions) {
 
     socket.onclose = () => {
       setConnected(false);
+      // Never schedule a reconnect after the hook unmounts.
+      if (disposedRef.current) return;
       const delay = Math.min(1000 * 2 ** attemptsRef.current, 15_000);
       attemptsRef.current += 1;
       reconnectRef.current = setTimeout(connect, delay);
@@ -54,8 +58,10 @@ export function useWebSocket({ channels, onMessage }: UseWebSocketOptions) {
   }, [JSON.stringify(channels)]);
 
   useEffect(() => {
+    disposedRef.current = false;
     connect();
     return () => {
+      disposedRef.current = true;
       clearTimeout(reconnectRef.current);
       socketRef.current?.close();
     };

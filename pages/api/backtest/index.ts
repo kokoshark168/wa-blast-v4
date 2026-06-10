@@ -1,6 +1,7 @@
 import type { NextApiResponse } from 'next';
 import { z } from 'zod';
 import { withAuth, type AuthedRequest } from '@/lib/auth/guard';
+import { featureEnabled } from '@/lib/features';
 import { prisma } from '@/lib/prisma';
 import { runBacktest } from '@/lib/engines/backtest';
 import type { BacktestTrade } from '@/types';
@@ -57,6 +58,10 @@ function synthesizeTrades(seed: string, count = 60): BacktestTrade[] {
  */
 async function handler(req: AuthedRequest, res: NextApiResponse) {
   const userId = req.user.id;
+
+  if (!featureEnabled('ENABLE_BACKTESTING')) {
+    return res.status(503).json({ error: 'Backtesting is disabled' });
+  }
 
   if (req.method === 'GET') {
     try {

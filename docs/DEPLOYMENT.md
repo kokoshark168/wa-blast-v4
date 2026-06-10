@@ -30,7 +30,7 @@ The app container waits for Postgres/Redis healthchecks before starting.
 | -------- | :------: | ------- | ------- |
 | `DATABASE_URL` | ✅ | `postgresql://alphaflow:alphaflow123@postgres:5432/alphaflow` | Postgres DSN (Prisma) |
 | `REDIS_URL` | ✅ | `redis://redis:6379` | Cache + pub/sub |
-| `JWT_SECRET` | ✅ | — | Token signing secret (**rotate in prod**) |
+| `JWT_SECRET` | ✅ | — | Token signing secret, **min 32 chars — app refuses to boot in production without it** |
 | `JWT_EXPIRY` | — | `7d` | Access-token lifetime |
 | `BINANCE_API_KEY` / `BINANCE_API_SECRET` | — | — | Binance market data |
 | `BYBIT_API_KEY` / `BYBIT_API_SECRET` | — | — | Bybit market data |
@@ -47,7 +47,7 @@ The app container waits for Postgres/Redis healthchecks before starting.
 | `SMTP_HOST` | — | `smtp.gmail.com` | E-mail transport host |
 | `SMTP_PORT` | — | `587` | SMTP port |
 | `SMTP_USER` | — | — | SMTP username (gates e-mail `isConfigured`) |
-| `SMTP_PASSWORD` / `SMTP_PASS` | — | — | SMTP password |
+| `SMTP_PASS` | — | — | SMTP password |
 | `SMTP_FROM` | — | `noreply@alphaflow.io` | From address |
 | `SMTP_SECURE` | — | `false` | `true` for implicit TLS (port 465) |
 | `SMTP_TO` | — | — | Default recipient |

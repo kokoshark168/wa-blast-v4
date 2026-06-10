@@ -4,8 +4,8 @@ export function middleware(request: NextRequest) {
   const authToken = request.headers.get('authorization');
   const pathname = request.nextUrl.pathname;
 
-  // Allow public routes
-  if (pathname.startsWith('/api/auth')) {
+  // Allow public routes (auth endpoints + unauthenticated health probe).
+  if (pathname.startsWith('/api/auth') || pathname === '/api/health') {
     return NextResponse.next();
   }
 

@@ -1,6 +1,7 @@
 import type { NextApiResponse } from 'next';
 import { z } from 'zod';
 import { withAuth, type AuthedRequest } from '@/lib/auth/guard';
+import { featureEnabled } from '@/lib/features';
 import { prisma } from '@/lib/prisma';
 import { buildWhaleTransaction, type RawWhaleTransfer, type WhaleContext } from '@/lib/engines/whale';
 import type { Chain, WhaleTier, WhaleTransaction } from '@/types';
@@ -26,6 +27,9 @@ const TIER_RANK: Record<WhaleTier, number> = { '100k': 1, '1m': 2, '10m': 3 };
 async function handler(req: AuthedRequest, res: NextApiResponse) {
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
+  }
+  if (!featureEnabled('ENABLE_WHALE_TRACKING')) {
+    return res.status(503).json({ error: 'Whale tracking is disabled' });
   }
 
   const parsed = querySchema.safeParse(req.query);
