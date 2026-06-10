@@ -1,5 +1,6 @@
 node_modules/
 .env
+.env.local
 *.sqlite
 sessions/
 *_backup/
@@ -15,3 +16,21 @@ data/
 *.sqlite-wal
 server.pid
 src/
+.next/
+out/
+build/
+coverage/
+.nyc_output/
+.pnp
+.pnp.js
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+Thumbs.db
+prisma/dev.db
+prisma/dev.db-journal
+
+# Build info
+tsconfig.tsbuildinfo
