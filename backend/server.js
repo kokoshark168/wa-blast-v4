@@ -187,6 +187,10 @@ app.use('/api/warmup', require('./routes/warmup'));
 app.use('/api/tenants', require('./routes/tenants'));
 app.use('/api/billing', require('./routes/billing'));
 
+// Alpha Council: Multi-Agent Investment Research System
+const { initAlphaCounsilRoutes } = require('./routes/alpha-council');
+app.use('/api/alpha-council', initAlphaCounsilRoutes(getDb()));
+
 // Public API with API Key auth
 const apiKeyAuth = require('./middleware/apiKeyAuth');
 app.post('/api/public/send-message', apiKeyAuth('send_message'), (req, res) => {
