@@ -1,0 +1,23 @@
+@import "tailwindcss";
+/* the repo-root .gitignore has "src/", which Tailwind's auto source detection
+   honors — register our sources explicitly so JSX utilities are compiled */
+@source "../src";
+@source "../index.html";
+
+:root {
+  color-scheme: dark;
+}
+
+body {
+  @apply bg-[#070b14] text-slate-200 antialiased;
+  font-family: ui-sans-serif, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: #0b1220; }
+::-webkit-scrollbar-thumb { background: #24304a; border-radius: 6px; }
+::-webkit-scrollbar-thumb:hover { background: #35507c; }
+
+.card { @apply bg-[#0b1220] border border-[#1c2740] rounded-xl; }
+.btn { @apply inline-flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium border border-[#243150] transition-colors cursor-pointer select-none; }
+.input { @apply bg-[#0e1626] border border-[#22304e] rounded-lg px-3 py-2 text-sm outline-none focus:border-sky-500 placeholder:text-slate-500; }

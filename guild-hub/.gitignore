@@ -1,0 +1,4 @@
+# repo-root .gitignore excludes "src/" (and "dist/") globally — re-include ours
+!src/
+node_modules/
+dist/
